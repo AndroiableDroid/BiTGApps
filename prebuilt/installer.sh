@@ -109,9 +109,7 @@ build_defaults() {
   UNZIP_DIR="$TMP/unzip";
   TMP_ADDON="$UNZIP_DIR/tmp_addon";
   TMP_SYS="$UNZIP_DIR/tmp_sys";
-  TMP_SYS_ROOT="$UNZIP_DIR/tmp_sys_root";
   TMP_PRIV="$UNZIP_DIR/tmp_priv";
-  TMP_PRIV_ROOT="$UNZIP_DIR/tmp_priv_root";
   TMP_PRIV_SETUP="$UNZIP_DIR/tmp_priv_setup";
   TMP_LIB="$UNZIP_DIR/tmp_lib";
   TMP_LIB64="$UNZIP_DIR/tmp_lib64";
@@ -120,12 +118,10 @@ build_defaults() {
   TMP_DEFAULT_PERM="$UNZIP_DIR/tmp_default";
   TMP_G_PERM="$UNZIP_DIR/tmp_perm";
   TMP_G_PREF="$UNZIP_DIR/tmp_pref";
-  TMP_PERM_ROOT="$UNZIP_DIR/tmp_perm_root";
   # Set logging
   LOG="/cache/bitgapps/installation.log";
   config_log="/cache/bitgapps/config-installation.log";
   restore="/cache/bitgapps/backup-script.log";
-  whitelist="/cache/bitgapps/whitelist.log";
   SQLITE_LOG="/cache/bitgapps/sqlite.log";
   SQLITE_TOOL="/tmp/sqlite3";
   ZIPALIGN_LOG="/cache/bitgapps/zipalign.log";
@@ -199,7 +195,7 @@ mount_apex() {
   then
     SYSTEM=/system_root/system
   else
-    SYSTEM=/system
+    SYSTEM=/system/system
   fi;
   test -d $SYSTEM/apex || return 1
   local apex dest loop minorx num
@@ -251,7 +247,7 @@ umount_apex() {
   unset ANDROID_RUNTIME_ROOT ANDROID_TZDATA_ROOT BOOTCLASSPATH
 }
 
-early_mount() {
+early_unmount() {
   umount_apex;
   umount /data 2>/dev/null;
   if [ -d /system ] && [ -n "$(cat /etc/fstab | grep /system)" ]; then
@@ -263,23 +259,20 @@ early_mount() {
   umount /vendor 2>/dev/null;
 }
 
-# Mount partitions - RO
-mdevice_RO() {
+# Mount partitions - RW
+mount_all() {
+  early_unmount;
   mount -o bind /dev/urandom /dev/random
   if ! is_mounted /data; then
     mount /data
   fi;
   mount -o ro -t auto /cache 2>/dev/null;
-  mdevice_Cache() {
-    mount -o rw,remount -t auto /cache
-  }
+  mount -o rw,remount -t auto /cache
   mount -o ro -t auto /persist 2>/dev/null;
   vendor_fallback;
   if [ "$device_vendorpartition" = "true" ]; then
     mount -o ro -t auto /vendor
-      mdevice_Vendor() {
-        mount -o rw,remount -t auto /vendor
-      }
+    mount -o rw,remount -t auto /vendor
   fi;
   if [ -d /system_root ] && [ -n "$(cat /etc/fstab | grep /system_root)" ]; then
     ANDROID_ROOT=/system_root
@@ -288,59 +281,9 @@ mdevice_RO() {
   fi;
   if ! is_mounted $ANDROID_ROOT; then
     mount -o ro -t auto $ANDROID_ROOT 2>/dev/null;
-      mdevice_System() {
-        mount -o rw,remount -t auto $ANDROID_ROOT
-      }
+    mount -o rw,remount -t auto $ANDROID_ROOT
   fi;
-}
-
-# Re-mount partitions - RW
-mdevice_RW() {
-  for block in system vendor; do
-    for slot in "" _a _b; do
-      blockdev --setrw /dev/block/mapper/$block$slot 2>/dev/null
-    done
-  done
-  mdevice_Cache;
-  if [ "$device_vendorpartition" = "true" ]; then
-    mdevice_Vendor;
-  fi;
-  mdevice_System;
   mount_apex;
-}
-
-# Mount block - RO
-mblock_RO() {
-  if [ "$device_vendorpartition" = "true" ]; then
-    mount -o ro -t auto /dev/block/bootdevice/by-name/vendor /vendor 2>/dev/null;
-      mblock_Vendor() {
-        mount -o rw,remount -t auto /dev/block/bootdevice/by-name/vendor /vendor
-      }
-  fi;
-  mount -o ro -t auto /dev/block/bootdevice/by-name/system $ANDROID_ROOT 2>/dev/null;
-  mblock_System() {
-    mount -o rw,remount -t auto /dev/block/bootdevice/by-name/system $ANDROID_ROOT
-  }
-  local slot=$(getprop ro.boot.slot_suffix 2>/dev/null)
-  if [ "$system_as_root" = "true" ]; then
-    if [ "$device_abpartition" == "true" ]; then
-      mount -o ro -t auto /dev/block/bootdevice/by-name/system$slot /system
-        mblock_SystemAB() {
-          mount -o rw,remount -t auto /dev/block/bootdevice/by-name/system$slot /system
-        }
-    fi;
-  fi;
-}
-
-# Mount block - RW
-mblock_RW() {
-  if [ "$device_vendorpartition" = "true" ]; then
-    mblock_Vendor;
-  fi;
-  mblock_System;
-  if [ "$device_abpartition" == "true" ]; then
-    mblock_SystemAB;
-  fi;
 }
 
 # Set installation layout
@@ -350,37 +293,6 @@ system_layout() {
     SYSTEM=/system_root/system
   else
     SYSTEM=/system
-  fi;
-}
-
-boot_SAR() {
-  if [ -n "$(cat /etc/fstab | grep /system_root)" ]; then
-    sed -i '/init.${ro.zygote}.rc/a\\import /init.bootlog.rc' /system_root/init.rc
-    cp -f $TMP/init.bootlog.rc /system_root/init.bootlog.rc
-    chmod 0750 /system_root/init.bootlog.rc
-    chcon -h u:object_r:rootfs:s0 "/system_root/init.bootlog.rc";
-  else
-    SAR_PARTITION_LAYOUT=false
-  fi;
-}
-
-boot_AB() {
-  if [ ! -z "$active_slot" ]; then
-    sed -i '/init.${ro.zygote}.rc/a\\import /init.bootlog.rc' /system/init.rc
-    cp -f $TMP/init.bootlog.rc /system/init.bootlog.rc
-    chmod 0750 /system/init.bootlog.rc
-    chcon -h u:object_r:rootfs:s0 "/system/init.bootlog.rc";
-  else
-    AB_PARTITION_LAYOUT=false
-  fi;
-}
-
-boot_A() {
-  if [ "$SAR_PARTITION_LAYOUT" == "false" ] && [ "$AB_PARTITION_LAYOUT" == "false" ]; then
-    sed -i '/init.${ro.zygote}.rc/a\\import /init.bootlog.rc' /init.rc
-    cp -f $TMP/init.bootlog.rc /init.bootlog.rc
-    chmod 0750 /init.bootlog.rc
-    chcon -h u:object_r:rootfs:s0 "/init.bootlog.rc";
   fi;
 }
 
@@ -437,9 +349,6 @@ on_install_failed() {
   if [ "$device_vendorpartition" = "true" ]; then
     cp -f $VENDOR/build.prop /cache/bitgapps/build2.prop 2>/dev/null;
   fi;
-  if [ -f $SYSTEM/etc/prop.default ]; then
-    cp -f $SYSTEM/etc/prop.default /cache/bitgapps/prop.default 2>/dev/null;
-  fi;
   cp -f $INTERNAL/cts-config.prop /cache/bitgapps/cts-config.prop 2>/dev/null;
   cp -f $INTERNAL/setup-config.prop /cache/bitgapps/setup-config.prop 2>/dev/null;
   tar -cz -f "$TMP/bitgapps_debug_failed_logs.tar.gz" *
@@ -458,33 +367,12 @@ on_install_complete() {
   if [ "$device_vendorpartition" = "true" ]; then
     cp -f $VENDOR/build.prop /cache/bitgapps/build2.prop 2>/dev/null;
   fi;
-  if [ -f $SYSTEM/etc/prop.default ]; then
-    cp -f $SYSTEM/etc/prop.default /cache/bitgapps/prop.default 2>/dev/null;
-  fi;
   cp -f $INTERNAL/cts-config.prop /cache/bitgapps/cts-config.prop 2>/dev/null;
   cp -f $INTERNAL/setup-config.prop /cache/bitgapps/setup-config.prop 2>/dev/null;
   tar -cz -f "$TMP/bitgapps_debug_complete_logs.tar.gz" *
   cp -f $TMP/bitgapps_debug_complete_logs.tar.gz $INTERNAL/bitgapps_debug_complete_logs.tar.gz
   # Checkout log path
   cd /
-}
-
-unmount_all() {
-  ui_print " ";
-  umount_apex;
-  if [ "$device_abpartition" = "true" ]; then
-    mount -o ro $ANDROID_ROOT
-  else
-    umount $ANDROID_ROOT
-  fi;
-  if [ "$device_vendorpartition" = "true" ]; then
-    if [ "$device_abpartition" = "true" ]; then
-      mount -o ro $VENDOR
-    fi;
-    umount $VENDOR
-  fi;
-  umount /persist
-  umount /dev/random
 }
 
 cleanup() {
@@ -506,6 +394,24 @@ cleanup() {
 
 clean_logs() {
   rm -rf /cache/bitgapps
+}
+
+unmount_all() {
+  ui_print " ";
+  umount_apex;
+  if [ "$device_abpartition" = "true" ]; then
+    mount -o ro $ANDROID_ROOT
+  else
+    umount $ANDROID_ROOT
+  fi;
+  if [ "$device_vendorpartition" = "true" ]; then
+    if [ "$device_abpartition" = "true" ]; then
+      mount -o ro $VENDOR
+    fi;
+    umount $VENDOR
+  fi;
+  umount /persist
+  umount /dev/random
 }
 
 on_installed() {
@@ -606,15 +512,6 @@ on_config_check() {
   supported_target="true";
 }
 
-# Set privileged app Whitelist property
-on_whitelist_check() {
-  android_flag="$(get_prop "ro.control_privapp_permissions")";
-  supported_flag_enforce="enforce";
-  supported_flag_disable="disable";
-  supported_flag_log="log";
-  PROPFLAG="ro.control_privapp_permissions";
-}
-
 # Set version check property
 on_version_check() {
   android_sdk="$(get_prop "ro.build.version.sdk")";
@@ -695,91 +592,24 @@ check_platform() {
 }
 
 # Set pathmap
-product_pathmap() {
-  if [ "$android_sdk" = "$supported_sdk_v29" ]; then
-    SYSTEM_ADDOND="$SYSTEM/product/addon.d";
-    SYSTEM_APP="$SYSTEM/product/app";
-    SYSTEM_PRIV_APP="$SYSTEM/product/priv-app";
-    SYSTEM_ETC="$SYSTEM/product/etc";
-    SYSTEM_ETC_CONFIG="$SYSTEM/product/etc/sysconfig";
-    SYSTEM_ETC_DEFAULT="$SYSTEM/product/etc/default-permissions";
-    SYSTEM_ETC_PERM="$SYSTEM/product/etc/permissions";
-    SYSTEM_ETC_PREF="$SYSTEM/product/etc/preferred-apps";
-    SYSTEM_FRAMEWORK="$SYSTEM/product/framework";
-    SYSTEM_LIB="$SYSTEM/product/lib";
-    SYSTEM_LIB64="$SYSTEM/product/lib64";
-    mkdir $SYSTEM_ADDOND 2>/dev/null;
-    mkdir $SYSTEM_APP 2>/dev/null;
-    mkdir $SYSTEM_PRIV_APP 2>/dev/null;
-    mkdir $SYSTEM_ETC 2>/dev/null;
-    mkdir $SYSTEM_ETC_CONFIG 2>/dev/null;
-    mkdir $SYSTEM_ETC_DEFAULT 2>/dev/null;
-    mkdir $SYSTEM_ETC_PERM 2>/dev/null;
-    mkdir $SYSTEM_ETC_PREF 2>/dev/null;
-    mkdir $SYSTEM_FRAMEWORK 2>/dev/null;
-    mkdir $SYSTEM_LIB 2>/dev/null;
-    mkdir $SYSTEM_LIB64 2>/dev/null;
-    chmod 0755 $SYSTEM_ADDOND 2>/dev/null;
-    chmod 0755 $SYSTEM_APP 2>/dev/null;
-    chmod 0755 $SYSTEM_PRIV_APP 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC_CONFIG 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC_DEFAULT 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC_PERM 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC_PREF 2>/dev/null;
-    chmod 0755 $SYSTEM_FRAMEWORK 2>/dev/null;
-    chmod 0755 $SYSTEM_LIB 2>/dev/null;
-    chmod 0755 $SYSTEM_LIB64 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_ADDOND 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_APP 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_PRIV_APP 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_ETC 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_ETC_CONFIG 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_ETC_DEFAULT 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_ETC_PERM 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_ETC_PREF 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_FRAMEWORK 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_LIB 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_LIB64 2>/dev/null;
-    chcon -h u:object_r:system_file:s0 $SYSTEM_LIB64 2>/dev/null;
-  fi;
-}
-
-temp_pathmap() {
-  if [ "$android_sdk" = "$supported_sdk_v29" ]; then
-    SYSTEM_ADDOND="$SYSTEM/addon.d";
-    SYSTEM_APP="$SYSTEM/app";
-    SYSTEM_PRIV_APP="$SYSTEM/priv-app";
-    SYSTEM_ETC_CONFIG="$SYSTEM/etc/sysconfig";
-    SYSTEM_ETC_DEFAULT="$SYSTEM/etc/default-permissions";
-    SYSTEM_ETC_PERM="$SYSTEM/etc/permissions";
-    SYSTEM_ETC_PREF="$SYSTEM/etc/preferred-apps";
-    SYSTEM_FRAMEWORK="$SYSTEM/framework";
-    SYSTEM_LIB="$SYSTEM/lib";
-    SYSTEM_LIB64="$SYSTEM/lib64";
-  fi;
-}
-
 system_pathmap() {
-  if [ "$android_sdk" = "$supported_sdk_v28" ] || [ "$android_sdk" = "$supported_sdk_v27" ] || [ "$android_sdk" = "$supported_sdk_v25" ];
-  then
-    SYSTEM_ADDOND="$SYSTEM/addon.d";
-    SYSTEM_APP="$SYSTEM/app";
-    SYSTEM_PRIV_APP="$SYSTEM/priv-app";
-    SYSTEM_ETC_CONFIG="$SYSTEM/etc/sysconfig";
-    SYSTEM_ETC_DEFAULT="$SYSTEM/etc/default-permissions";
-    SYSTEM_ETC_PERM="$SYSTEM/etc/permissions";
-    SYSTEM_ETC_PREF="$SYSTEM/etc/preferred-apps";
-    SYSTEM_FRAMEWORK="$SYSTEM/framework";
-    SYSTEM_LIB="$SYSTEM/lib";
-    SYSTEM_LIB64="$SYSTEM/lib64";
-    mkdir $SYSTEM_ETC_DEFAULT 2>/dev/null;
-    mkdir $SYSTEM_ETC_PREF 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC_DEFAULT 2>/dev/null;
-    chmod 0755 $SYSTEM_ETC_PREF 2>/dev/null;
-  fi;
+  SYSTEM_ADDOND="$SYSTEM/addon.d";
+  SYSTEM_APP="$SYSTEM/app";
+  SYSTEM_PRIV_APP="$SYSTEM/priv-app";
+  SYSTEM_ETC_CONFIG="$SYSTEM/etc/sysconfig";
+  SYSTEM_ETC_DEFAULT="$SYSTEM/etc/default-permissions";
+  SYSTEM_ETC_PERM="$SYSTEM/etc/permissions";
+  SYSTEM_ETC_PREF="$SYSTEM/etc/preferred-apps";
+  SYSTEM_FRAMEWORK="$SYSTEM/framework";
+  SYSTEM_LIB="$SYSTEM/lib";
+  SYSTEM_LIB64="$SYSTEM/lib64";
+  mkdir $SYSTEM_ETC_DEFAULT 2>/dev/null;
+  mkdir $SYSTEM_ETC_PREF 2>/dev/null;
+  chmod 0755 $SYSTEM_ETC_DEFAULT 2>/dev/null;
+  chmod 0755 $SYSTEM_ETC_PREF 2>/dev/null;
+  chcon -h u:object_r:system_file:s0 $SYSTEM_ETC_DEFAULT 2>/dev/null;
+  chcon -h u:object_r:system_file:s0 $SYSTEM_ETC_PREF 2>/dev/null;
 }
-# end pathmap
 
 # Create temporary log directory
 logd() {
@@ -807,9 +637,7 @@ mk_component() {
     echo "- Creating components in :" $TMP >> $LOG;
     mkdir $UNZIP_DIR/tmp_addon
     mkdir $UNZIP_DIR/tmp_sys
-    mkdir $UNZIP_DIR/tmp_sys_root
     mkdir $UNZIP_DIR/tmp_priv
-    mkdir $UNZIP_DIR/tmp_priv_root
     mkdir $UNZIP_DIR/tmp_priv_setup
     mkdir $UNZIP_DIR/tmp_lib
     mkdir $UNZIP_DIR/tmp_lib64
@@ -818,13 +646,10 @@ mk_component() {
     mkdir $UNZIP_DIR/tmp_default
     mkdir $UNZIP_DIR/tmp_perm
     mkdir $UNZIP_DIR/tmp_pref
-    mkdir $UNZIP_DIR/tmp_perm_root
     chmod 0755 $UNZIP_DIR
     chmod 0755 $UNZIP_DIR/tmp_addon
     chmod 0755 $UNZIP_DIR/tmp_sys
-    chmod 0755 $UNZIP_DIR/tmp_sys_root
     chmod 0755 $UNZIP_DIR/tmp_priv
-    chmod 0755 $UNZIP_DIR/tmp_priv_root
     chmod 0755 $UNZIP_DIR/tmp_priv_setup
     chmod 0755 $UNZIP_DIR/tmp_lib
     chmod 0755 $UNZIP_DIR/tmp_lib64
@@ -833,7 +658,6 @@ mk_component() {
     chmod 0755 $UNZIP_DIR/tmp_default
     chmod 0755 $UNZIP_DIR/tmp_perm
     chmod 0755 $UNZIP_DIR/tmp_pref
-    chmod 0755 $UNZIP_DIR/tmp_perm_root
   else
     echo "- Unzip directory not found in :" $TMP >> $LOG;
   fi;
@@ -842,56 +666,46 @@ mk_component() {
 # Remove pre-installed system files
 pre_installed_v29() {
   if [ "$android_sdk" = "$supported_sdk_v29" ]; then
-    del() {
-      rm -rf $SYSTEM_APP/GoogleCalendarSyncAdapter
-      rm -rf $SYSTEM_APP/GoogleContactsSyncAdapter
-      rm -rf $SYSTEM_APP/ExtShared
-      rm -rf $SYSTEM_APP/GoogleExtShared
-      rm -rf $SYSTEM_APP/MarkupGoogle
-      rm -rf $SYSTEM_APP/SoundPickerPrebuilt
-      rm -rf $SYSTEM_PRIV_APP/CarrierSetup
-      rm -rf $SYSTEM_PRIV_APP/ConfigUpdater
-      rm -rf $SYSTEM_PRIV_APP/GmsCoreSetupPrebuilt
-      rm -rf $SYSTEM_PRIV_APP/ExtServices
-      rm -rf $SYSTEM_PRIV_APP/GoogleExtServices
-      rm -rf $SYSTEM_PRIV_APP/GoogleServicesFramework
-      rm -rf $SYSTEM_PRIV_APP/Phonesky
-      rm -rf $SYSTEM_PRIV_APP/PrebuiltGmsCoreQt
-      rm -rf $SYSTEM_FRAMEWORK/com.google.android.dialer.support.jar
-      rm -rf $SYSTEM_FRAMEWORK/com.google.android.maps.jar
-      rm -rf $SYSTEM_FRAMEWORK/com.google.android.media.effects.jar
-      rm -rf $SYSTEM_LIB/libsketchology_native.so
-      rm -rf $SYSTEM_LIB64/libjni_latinimegoogle.so
-      rm -rf $SYSTEM_LIB64/libsketchology_native.so
-      rm -rf $SYSTEM_ETC_CONFIG/dialer_experience.xml
-      rm -rf $SYSTEM_ETC_CONFIG/google.xml
-      rm -rf $SYSTEM_ETC_CONFIG/google_build.xml
-      rm -rf $SYSTEM_ETC_CONFIG/google_exclusives_enable.xml
-      rm -rf $SYSTEM_ETC_CONFIG/google-hiddenapi-package-whitelist.xml
-      rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2017.xml
-      rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2018.xml
-      rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2019_midyear.xml
-      rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2019.xml
-      rm -rf $SYSTEM_ETC_CONFIG/whitelist_com.android.omadm.service.xml
-      rm -rf $SYSTEM_ETC_DEFAULT/default-permissions.xml
-      rm -rf $SYSTEM_ETC_DEFAULT/opengapps-permissions.xml
-      rm -rf $SYSTEM_ETC_PERM/com.google.android.dialer.support.xml
-      rm -rf $SYSTEM_ETC_PERM/com.google.android.maps.xml
-      rm -rf $SYSTEM_ETC_PERM/com.google.android.media.effects.xml
-      rm -rf $SYSTEM_ETC_PERM/privapp-permissions-google.xml
-      rm -rf $SYSTEM_ETC_PERM/split-permissions-google.xml
-      rm -rf $SYSTEM_ETC_PREF/google.xml
-      rm -rf $SYSTEM_ADDOND/90bit_gapps.sh
-      rm -rf $SYSTEM/etc/g.prop
-    }
-    # Delete pre-installed APKs from product
-    del;
-    # Temporary set system pathmap
-    temp_pathmap;
-    # Delete pre-installed APKs from system
-    del;
-    # Set product pathmap for installation
-    product_pathmap;
+    rm -rf $SYSTEM_APP/GoogleCalendarSyncAdapter
+    rm -rf $SYSTEM_APP/GoogleContactsSyncAdapter
+    rm -rf $SYSTEM_APP/ExtShared
+    rm -rf $SYSTEM_APP/GoogleExtShared
+    rm -rf $SYSTEM_APP/MarkupGoogle
+    rm -rf $SYSTEM_APP/SoundPickerPrebuilt
+    rm -rf $SYSTEM_PRIV_APP/CarrierSetup
+    rm -rf $SYSTEM_PRIV_APP/ConfigUpdater
+    rm -rf $SYSTEM_PRIV_APP/GmsCoreSetupPrebuilt
+    rm -rf $SYSTEM_PRIV_APP/ExtServices
+    rm -rf $SYSTEM_PRIV_APP/GoogleExtServices
+    rm -rf $SYSTEM_PRIV_APP/GoogleServicesFramework
+    rm -rf $SYSTEM_PRIV_APP/Phonesky
+    rm -rf $SYSTEM_PRIV_APP/PrebuiltGmsCoreQt
+    rm -rf $SYSTEM_FRAMEWORK/com.google.android.dialer.support.jar
+    rm -rf $SYSTEM_FRAMEWORK/com.google.android.maps.jar
+    rm -rf $SYSTEM_FRAMEWORK/com.google.android.media.effects.jar
+    rm -rf $SYSTEM_LIB/libsketchology_native.so
+    rm -rf $SYSTEM_LIB64/libjni_latinimegoogle.so
+    rm -rf $SYSTEM_LIB64/libsketchology_native.so
+    rm -rf $SYSTEM_ETC_CONFIG/dialer_experience.xml
+    rm -rf $SYSTEM_ETC_CONFIG/google.xml
+    rm -rf $SYSTEM_ETC_CONFIG/google_build.xml
+    rm -rf $SYSTEM_ETC_CONFIG/google_exclusives_enable.xml
+    rm -rf $SYSTEM_ETC_CONFIG/google-hiddenapi-package-whitelist.xml
+    rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2017.xml
+    rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2018.xml
+    rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2019_midyear.xml
+    rm -rf $SYSTEM_ETC_CONFIG/pixel_experience_2019.xml
+    rm -rf $SYSTEM_ETC_CONFIG/whitelist_com.android.omadm.service.xml
+    rm -rf $SYSTEM_ETC_DEFAULT/default-permissions.xml
+    rm -rf $SYSTEM_ETC_DEFAULT/opengapps-permissions.xml
+    rm -rf $SYSTEM_ETC_PERM/com.google.android.dialer.support.xml
+    rm -rf $SYSTEM_ETC_PERM/com.google.android.maps.xml
+    rm -rf $SYSTEM_ETC_PERM/com.google.android.media.effects.xml
+    rm -rf $SYSTEM_ETC_PERM/privapp-permissions-google.xml
+    rm -rf $SYSTEM_ETC_PERM/split-permissions-google.xml
+    rm -rf $SYSTEM_ETC_PREF/google.xml
+    rm -rf $SYSTEM_ADDOND/90bit_gapps.sh
+    rm -rf $SYSTEM/etc/g.prop
   fi;
 }
 
@@ -2128,6 +1942,19 @@ sdk_v25_install() {
   fi;
 }
 
+# OTA survival script
+backup_script() {
+  ZIP="zip/sys_addon.tar.xz"
+  unpack_zip;
+  extract_backup_script() {
+    tar tvf $ZIP_FILE/sys_addon.tar.xz >> $restore;
+    tar -xf $ZIP_FILE/sys_addon.tar.xz -C $TMP_ADDON;
+  }
+  extract_backup_script;
+  set_sparse_backup;
+  chcon -h u:object_r:system_file:s0 "$SYSTEM_ADDOND/90bit_gapps.sh";
+}
+
 # Set config dependent packages
 ZIP_INITIAL="
   zip/core/priv_app_GoogleBackupTransport.tar.xz
@@ -2282,75 +2109,6 @@ opt_v29() {
   fi;
 }
 
-# Remove Privileged App Whitelist property with flag enforce
-purge_whitelist_permission() {
-  if [ -n "$(cat $SYSTEM/build.prop | grep control_privapp_permissions)" ]; then
-    grep -v "$PROPFLAG" $SYSTEM/build.prop > $TMP/build.prop
-    rm -rf $SYSTEM/build.prop
-    cp -f $TMP/build.prop $SYSTEM/build.prop
-    chmod 0644 $SYSTEM/build.prop
-    rm -rf $TMP/build.prop
-  else
-    echo "ERROR: Unable to find Whitelist property in 'system'" >> $whitelist;
-  fi;
-  if [ -f "$SYSTEM/product/build.prop" ]; then
-    if [ -n "$(cat $SYSTEM/product/build.prop | grep control_privapp_permissions)" ]; then
-      mkdir $TMP/product
-      grep -v "$PROPFLAG" $SYSTEM/product/build.prop > $TMP/product/build.prop
-      rm -rf $SYSTEM/product/build.prop
-      cp -f $TMP/product/build.prop $SYSTEM/product/build.prop
-      chmod 0644 $SYSTEM/product/build.prop
-      rm -rf $TMP/product/build.prop
-    else
-      echo "ERROR: Unable to find Whitelist property in 'Product'" >> $whitelist;
-    fi;
-  else
-    echo "ERROR: unable to find product 'build.prop'" >> $whitelist;
-  fi;
-  if [ -f $SYSTEM/etc/prop.default ]; then
-    if [ -n "$(cat $SYSTEM/etc/prop.default | grep control_privapp_permissions)" ]; then
-      if [ -f "$ANDROID_ROOT/default.prop" ]; then
-        SYMLINK=true
-      else
-        SYMLINK=false
-      fi;
-      grep -v "$PROPFLAG" $SYSTEM/etc/prop.default > $TMP/prop.default
-      rm -rf $SYSTEM/etc/prop.default
-      if [ "$SYMLINK" = "true" ]; then
-        rm -rf $ANDROID_ROOT/default.prop
-      fi;
-      cp -f $TMP/prop.default $SYSTEM/etc/prop.default
-      chmod 0644 $SYSTEM/etc/prop.default
-      if [ "$SYMLINK" = "true" ]; then
-        ln -sfnv $SYSTEM/etc/prop.default $ANDROID_ROOT/default.prop
-      fi;
-      rm -rf $TMP/prop.default
-    else
-      echo "ERROR: Unable to find Whitelist property in 'system_root'" >> $whitelist;
-    fi;
-  else
-    echo "ERROR: unable to find 'prop.default'" >> $whitelist;
-  fi;
-  if [ "$device_vendorpartition" = "true" ]; then
-    if [ -n "$(cat $VENDOR/build.prop | grep control_privapp_permissions)" ]; then
-      grep -v "$PROPFLAG" $VENDOR/build.prop > $TMP/build.prop
-      rm -rf $VENDOR/build.prop
-      cp -f $TMP/build.prop $VENDOR/build.prop
-      chmod 0644 $VENDOR/build.prop
-      rm -rf $TMP/build.prop
-    else
-      echo "ERROR: Unable to find Whitelist property in 'vendor'" >> $whitelist;
-    fi;
-  else
-    echo "ERROR: No vendor partition present" >> $whitelist;
-  fi;
-}
-
-# Add Whitelist property with flag disable in system
-set_whitelist_permission() {
-  insert_line $SYSTEM/build.prop "ro.control_privapp_permissions=disable" after 'net.bt.name=Android' 'ro.control_privapp_permissions=disable';
-}
-
 # Apply safetynet patch
 cts_patch_system() {
   # Ext Build fingerprint
@@ -2429,12 +2187,6 @@ cts_patch_vendor() {
   fi;
 }
 
-# Apply Privileged permission patch
-whitelist_patch() {
-  purge_whitelist_permission;
-  set_whitelist_permission;
-}
-
 # Check whether CTS config file present in device or not
 get_cts_config() {
   if [ -f $INTERNAL/cts-config.prop ]; then
@@ -2493,72 +2245,20 @@ selinux_fix() {
   fi;
 }
 
-# Print config installation
-config_info() {
-  ui_print " ";
-  ui_print "Config Installation";
-  if [ "$setup_config" = "true" ] || [ "$cts_config" = "true" ]; then
-    ui_print "True";
-  else
-    ui_print "False";
-  fi;
-}
-
-# Tools for downloading addon packages
-addon_tools() {
-  # Busybox
+# Addon installation script
+addon_inst() {
   rm -rf $SYSTEM/xbin/busybox
   cp -f $TMP/bb/busybox-arm $SYSTEM/xbin/busybox
   chmod 0755 $SYSTEM/xbin/busybox
   chcon -h u:object_r:system_file:s0 "$SYSTEM/xbin/busybox";
-  # Curl
   rm -rf $SYSTEM/xbin/curl
   cp -f $TMP/curl $SYSTEM/xbin/curl
   chmod 0755 $SYSTEM/xbin/curl
   chcon -h u:object_r:system_file:s0 "$SYSTEM/xbin/curl";
-}
-
-# Addon installation script
-addon_inst() {
   rm -rf $SYSTEM/xbin/addon.sh
   cp -f $TMP/addon.sh $SYSTEM/xbin/addon.sh
   chmod 0755 $SYSTEM/xbin/addon.sh
   chcon -h u:object_r:system_file:s0 "$SYSTEM/xbin/addon.sh";
-}
-
-# Addon OTA survival function
-addon_restore() {
-  ui_print " ";
-  ui_print "Restore Addon Package";
-  if [ -d "/data/data" ]; then
-    device_CleanInstall=false
-  fi;
-  if [ "$device_CleanInstall" = "false" ]; then
-    if [ -f /sdcard/addon/prebuilt_Velvet.tar.gz ]; then
-      ui_print "Assistant";
-      if [ "$android_sdk" = "$supported_sdk_v29" ]; then
-        tar -xzf /sdcard/addon/prebuilt_Velvet.tar.gz -C $SYSTEM/product/priv-app
-      else
-        min_SDK=true
-      fi;
-      if [ "$min_SDK" = "true" ]; then
-        tar -xzf /sdcard/addon/prebuilt_Velvet.tar.gz -C $SYSTEM/priv-app
-      fi;
-    fi;
-    if [ -f /sdcard/addon/prebuilt_Wellbeing.tar.gz ]; then
-      ui_print "Wellbeing";
-      if [ "$android_sdk" = "$supported_sdk_v29" ]; then
-        tar -xzf /sdcard/addon/prebuilt_Wellbeing.tar.gz -C $SYSTEM/product/priv-app
-      else
-        min_SDK=true
-      fi;
-      if [ "$min_SDK" = "true" ]; then
-        tar -xzf /sdcard/addon/prebuilt_Wellbeing.tar.gz -C $SYSTEM/priv-app
-      fi;
-    fi;
-  else
-    ui_print "Skipped";
-  fi;
 }
 
 print_build_info() {
@@ -2599,15 +2299,8 @@ function pre_install() {
   on_sdk;
   on_partition_check;
   set_mount;
-  early_mount;
-  mdevice_RO;
-  mdevice_RW;
-  mblock_RO;
-  mblock_RW;
+  mount_all;
   system_layout;
-  boot_SAR;
-  boot_AB;
-  boot_A;
   on_AB;
   mount_stat;
   profile;
@@ -2651,7 +2344,6 @@ ui_print "Installing";
 # Begin installation
 function post_install() {
   build_defaults;
-  product_pathmap;
   system_pathmap;
   recovery_actions;
   mk_component;
@@ -2666,20 +2358,16 @@ function post_install() {
   on_config_check;
   get_setup_config;
   config_install;
+  backup_script;
   set_assistant;
   opt_v28;
-  on_whitelist_check;
-  whitelist_patch;
   on_product_check;
   get_cts_config;
   cts_patch;
   sdk_fix;
   selinux_fix;
   sqlite_opt;
-  config_info;
-  addon_tools;
   addon_inst;
-  addon_restore;
   on_installed;
   recovery_cleanup;
 }

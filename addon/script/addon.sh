@@ -37,18 +37,11 @@ CYAN='\033[0;36m'
 RED='\033[0;41m'
 NC='\033[0m'
 
-# Backup
-rm -rf /sdcard/addon
-mkdir /sdcard/addon
-
 # Android SDK check
 android_sdk=`getprop ro.build.version.sdk`
 
-if [ "$android_sdk" == "29" ] || [ "$android_sdk" == "28" ]; then
-  mount -o rw,remount /
-else
-  mount -o rw,remount /system
-fi;
+mount -o rw,remount /
+mount -o rw,remount /system
 
 # Installation layout
 echo "=========================="
@@ -73,7 +66,7 @@ do
               chcon -h u:object_r:system_file:s0 "/system/product/priv-app/Velvet/Velvet.apk"; 2>/dev/null;
               busybox echo -e "${CYAN}  => Check Installed Package ${NC}"
               if [ -f /system/product/priv-app/Velvet/Velvet.apk ]; then
-                ls /system/product/priv-app/Velvet/Velvet.apk
+                echo "  => Package installed" && break
               else
                 echo "  => Package not installed" && break
               fi;
@@ -84,17 +77,10 @@ do
               chcon -h u:object_r:system_file:s0 "/system/priv-app/Velvet/Velvet.apk"; 2>/dev/null;
               busybox echo -e "${CYAN}  => Check Installed Package ${NC}"
               if [ -f /system/priv-app/Velvet/Velvet.apk ]; then
-                ls /system/priv-app/Velvet/Velvet.apk
+                echo "  => Package installed" && break
               else
                 echo "  => Package not installed" && break
               fi;
-            fi;
-            if [ -f /system/product/priv-app/Velvet/Velvet.apk ]; then
-              busybox echo -e "${CYAN}  => Backup Assistant Package ${NC}"
-              busybox tar -czf /sdcard/addon/prebuilt_Velvet.tar.gz /system/product/priv-app/Velvet
-            else
-              busybox echo -e "${CYAN}  => Backup Assistant Package ${NC}"
-              busybox tar -czf /sdcard/addon/prebuilt_Velvet.tar.gz /system/priv-app/Velvet
             fi;
             rm -rf /cache/prebuilt_Velvet.tar.xz 2>/dev/null;
             busybox echo -e "${CYAN}  => Installation Finished ${NC}"
@@ -116,32 +102,27 @@ do
               chcon -h u:object_r:system_file:s0 "/system/product/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk"; 2>/dev/null;
               busybox echo -e "${CYAN}  => Check Installed Package ${NC}"
               if [ -f /system/product/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk ]; then
-                ls /system/product/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk
+                echo "  => Package installed" && break
               else
                 echo "  => Package not installed" && break
               fi;
-            else
+            elif [ "$android_sdk" == "28" ]; then
               busybox tar -xf /cache/prebuilt_Wellbeing.tar.xz -C /system/priv-app 2>/dev/null;
               chmod 0755 /system/priv-app/WellbeingPrebuilt 2>/dev/null;
               chmod 0644 /system/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk 2>/dev/null;
               chcon -h u:object_r:system_file:s0 "/system/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk"; 2>/dev/null;
               busybox echo -e "${CYAN}  => Check Installed Package ${NC}"
               if [ -f /system/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk ]; then
-                ls /system/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk
+                echo "  => Package installed" && break
               else
                 echo "  => Package not installed" && break
               fi;
-            fi;
-            if [ -f /system/product/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk ]; then
-              busybox echo -e "${CYAN}  => Backup WellbeingPrebuilt Package ${NC}"
-              busybox tar -czf /sdcard/addon/prebuilt_Wellbeing.tar.gz /system/product/priv-app/WellbeingPrebuilt
+              rm -rf /cache/prebuilt_Wellbeing.tar.xz 2>/dev/null;
+              busybox echo -e "${CYAN}  => Installation Finished ${NC}"
+              break
             else
-              busybox echo -e "${CYAN}  => Backup WellbeingPrebuilt Package ${NC}"
-              busybox tar -czf /sdcard/addon/prebuilt_Wellbeing.tar.gz /system/priv-app/WellbeingPrebuilt
+              echo "  => Unsupported API $android_sdk" && break
             fi;
-            rm -rf /cache/prebuilt_Wellbeing.tar.xz 2>/dev/null;
-            busybox echo -e "${CYAN}  => Installation Finished ${NC}"
-            break
             ;;
         "Quit")
             break
