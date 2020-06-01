@@ -250,11 +250,11 @@ umount_apex() {
 early_unmount() {
   umount_apex;
   umount /data 2>/dev/null;
-  if [ -d /system ] && [ -n "$(cat /etc/fstab | grep /system)" ]; then
-    umount /system 2>/dev/null;
-  fi;
   if [ -d /system_root ] && [ -n "$(cat /etc/fstab | grep /system_root)" ]; then
     umount /system_root 2>/dev/null;
+  fi;
+  if [ -d /system ] && [ -n "$(cat /etc/fstab | grep /system)" ]; then
+    umount /system 2>/dev/null;
   fi;
   umount /vendor 2>/dev/null;
 }
